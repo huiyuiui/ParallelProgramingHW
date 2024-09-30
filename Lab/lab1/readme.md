@@ -1,4 +1,4 @@
-# Pixxels in circle
+# Pixels in circle
 
 ### Introduction
 
