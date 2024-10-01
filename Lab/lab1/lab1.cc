@@ -26,9 +26,17 @@ int main(int argc, char** argv) {
     unsigned long long y;
 
     // equally split part of computation to every rank
-    unsigned long long range = r / size;
-    unsigned long long start = rank * range;
-    unsigned long long end = (rank != size - 1) ? (rank + 1) * range : r;
+    unsigned long long final_rank, range, start, end;
+    if(r >= size){ // normal case, r >= p
+        range = r / size;
+        final_rank = size - 1;
+    }
+    else{ // rare case r < p
+        range = 1;
+        final_rank = r - 1;
+    }
+    start = rank * range;
+    end = (rank != final_rank) ? (rank + 1) * range : r;
     // in case r isn't divisible by size, let the end of final rank to compute rest of part
 
     if(rank == 0){
@@ -38,14 +46,14 @@ int main(int argc, char** argv) {
 		    pixels %= k;
         }
         // Receive every part computed by other rank, then sum up
-        for(unsigned long long i = 1; i < size; i++){
+        for(unsigned long long i = 1; i <= final_rank; i++){
             MPI_Recv(&y, 1, MPI_UNSIGNED_LONG_LONG, i, 1, MPI_COMM_WORLD, &stat);
             pixels += y;
             pixels %= k;
         }
         printf("%llu\n", (4 * pixels) % k);
     }
-    else{
+    else if(mpi_rank != 0 && mpi_rank <= final_rank){
         for(unsigned long long x = start; x < end; x++){
             y = ceil(sqrtl(r*r - x*x));
             pixels += y;

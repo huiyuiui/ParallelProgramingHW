@@ -14,6 +14,7 @@ int main(int argc, char** argv) {
     assert(!gethostname(hostname, HOST_NAME_MAX));
     MPI_Comm_rank(MPI_COMM_WORLD, &mpi_rank);
     MPI_Comm_size(MPI_COMM_WORLD, &mpi_ranks);
+
 #pragma omp parallel
     {
         omp_threads = omp_get_num_threads();
