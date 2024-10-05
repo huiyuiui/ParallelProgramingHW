@@ -13,9 +13,12 @@ using namespace std;
 // pick minimum half
 int merge_back(float** data_ptr, float* temp, int chunk_size){
     float* data = *data_ptr;
-    float* merged_data = new float[chunk_size];
     int now_idx, back_idx;
     now_idx = back_idx = 0;
+    // if the last element of data is small or equal than the first element of temp, these two arrays are sorted
+    if(data[chunk_size - 1] <= temp[0]) return 0; 
+
+    float* merged_data = new float[chunk_size];
     for(int i = 0; i < chunk_size; i++){
         if(data[now_idx] <= temp[back_idx]){
             merged_data[i] = data[now_idx];
@@ -37,10 +40,13 @@ int merge_back(float** data_ptr, float* temp, int chunk_size){
 // pick maximum half
 int merge_front(float** data_ptr, float* temp, int chunk_size, int another_chunk_size){
     float* data = *data_ptr;
-    float* merged_data = new float[chunk_size];
     int now_idx, front_idx;
     now_idx = chunk_size - 1;
     front_idx = another_chunk_size - 1;
+    // if the last element of temp is small or equal than the first element of data, these two arrays are sorted
+    if(temp[front_idx] <= data[0]) return 0;
+
+    float* merged_data = new float[chunk_size];
     for(int i = chunk_size - 1; i >= 0; i--){
         if(data[now_idx] < temp[front_idx] && front_idx >= 0){ // front_idx < 0 case only happens in final rank
             merged_data[i] = temp[front_idx];
