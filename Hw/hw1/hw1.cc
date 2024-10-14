@@ -11,12 +11,10 @@
 using namespace std;
 
 // pick minimum half
-int merge_back(float** data_ptr, float* temp, int chunk_size){
+void merge_back(float** data_ptr, float* temp, int chunk_size){
     float* data = *data_ptr;
     int now_idx, back_idx;
     now_idx = back_idx = 0;
-    // if the last element of data is small or equal than the first element of temp, these two arrays are sorted
-    if(data[chunk_size - 1] <= temp[0]) return 0; 
 
     float* merged_data = new float[chunk_size];
     for(int i = 0; i < chunk_size; i++){
@@ -33,18 +31,15 @@ int merge_back(float** data_ptr, float* temp, int chunk_size){
     std::swap(*data_ptr, merged_data);
     delete[] merged_data;
 
-    // return if merge happen (means that these two processor are not sorted)
-    return back_idx != 0;
+    return;
 }
 
 // pick maximum half
-int merge_front(float** data_ptr, float* temp, int chunk_size, int another_chunk_size){
+void merge_front(float** data_ptr, float* temp, int chunk_size, int another_chunk_size){
     float* data = *data_ptr;
     int now_idx, front_idx;
     now_idx = chunk_size - 1;
     front_idx = another_chunk_size - 1;
-    // if the last element of temp is small or equal than the first element of data, these two arrays are sorted
-    if(temp[front_idx] <= data[0]) return 0;
 
     float* merged_data = new float[chunk_size];
     for(int i = chunk_size - 1; i >= 0; i--){
@@ -61,8 +56,7 @@ int merge_front(float** data_ptr, float* temp, int chunk_size, int another_chunk
     std::swap(*data_ptr, merged_data);
     delete[] merged_data;
 
-    // return if merge happen (means that these two processor are not sorted)
-    return front_idx != (another_chunk_size - 1);
+    return;
 }
 
 int main(int argc, char **argv)
@@ -135,51 +129,73 @@ int main(int argc, char **argv)
     int odd_even_flag = 1; // 0: odd, 1: even
     int rtn_even, rtn_odd, rtn;
     rtn = rtn_even = rtn_odd = 0;
+    float maximum, minimum; // be used to check whether merge will happen
 
     while(not_done >= 1){
         if(odd_even_flag == 1){ // even phase
             if(rank % 2 == 0 && rank < final_rank){ // pass backward
-                if(rank != (final_rank - 1)){
-                    MPI_Sendrecv(data, chunk_size, MPI_FLOAT, rank + 1, 1, temp_data, chunk_size, MPI_FLOAT, rank + 1, 1, MPI_COMM_ACTIVE, &stat);
-                    rtn_even = merge_back(&data, temp_data, chunk_size);
-                }
-                else{
-                    MPI_Sendrecv(data, chunk_size, MPI_FLOAT, rank + 1, 1, final_rank_data, final_chunk_size, MPI_FLOAT, rank + 1, 1, MPI_COMM_ACTIVE, &stat);
-                    rtn_even = merge_back(&data, final_rank_data, chunk_size);
+                maximum = data[chunk_size - 1]; // minimum will be temp_data[0]
+                MPI_Sendrecv(&maximum, 1, MPI_FLOAT, rank + 1, 2, &minimum, 1, MPI_FLOAT, rank + 1, 2, MPI_COMM_ACTIVE, &stat); // notice that tag should different from below data exchange
+                rtn_even = maximum <= minimum ? 0 : 1; // if current data's maximum smaller then backward data's minimum, that is, no swap will happen
+                if(rtn_even){ // only change data when merge will happen
+                    if(rank != (final_rank - 1)){
+                        MPI_Sendrecv(data, chunk_size, MPI_FLOAT, rank + 1, 1, temp_data, chunk_size, MPI_FLOAT, rank + 1, 1, MPI_COMM_ACTIVE, &stat);
+                        merge_back(&data, temp_data, chunk_size);
+                    }
+                    else{
+                        MPI_Sendrecv(data, chunk_size, MPI_FLOAT, rank + 1, 1, final_rank_data, final_chunk_size, MPI_FLOAT, rank + 1, 1, MPI_COMM_ACTIVE, &stat);
+                        merge_back(&data, final_rank_data, chunk_size);
+                    }
                 }
             }
             else if(rank % 2 == 1){ // pass forward
-                if(rank != final_rank)
-                    MPI_Sendrecv(data, chunk_size, MPI_FLOAT, rank - 1, 1, temp_data, chunk_size, MPI_FLOAT, rank - 1, 1, MPI_COMM_ACTIVE, &stat);
-                else
-                    MPI_Sendrecv(data, chunk_size, MPI_FLOAT, rank - 1, 1, temp_data, normal_chunk_size, MPI_FLOAT, rank - 1, 1, MPI_COMM_ACTIVE, &stat);
-                rtn_even = merge_front(&data, temp_data, chunk_size, normal_chunk_size);
+                minimum = data[0]; // maximum will be temp_data[chunk_size - 1]
+                MPI_Sendrecv(&minimum, 1, MPI_FLOAT, rank - 1, 2, &maximum, 1, MPI_FLOAT, rank - 1, 2, MPI_COMM_ACTIVE, &stat);
+                rtn_even = maximum <= minimum ? 0 : 1; // if current data's minimum bigger then forward data's maximum, that is, no swap will happen
+                if(rtn_even){ // only change data when merge will happen
+                    if(rank != final_rank)
+                        MPI_Sendrecv(data, chunk_size, MPI_FLOAT, rank - 1, 1, temp_data, chunk_size, MPI_FLOAT, rank - 1, 1, MPI_COMM_ACTIVE, &stat);
+                    else
+                        MPI_Sendrecv(data, chunk_size, MPI_FLOAT, rank - 1, 1, temp_data, normal_chunk_size, MPI_FLOAT, rank - 1, 1, MPI_COMM_ACTIVE, &stat);
+                    merge_front(&data, temp_data, chunk_size, normal_chunk_size);
+                } 
             }
             odd_even_flag = 0;
         }
         if(odd_even_flag == 0){ // odd phase
             if(rank % 2 == 1 && rank < final_rank){ // pass backward
-                if(rank != final_rank - 1){
-                    MPI_Sendrecv(data, chunk_size, MPI_FLOAT, rank + 1, 1, temp_data, chunk_size, MPI_FLOAT, rank + 1, 1, MPI_COMM_ACTIVE, &stat);
-                    rtn_odd = merge_back(&data, temp_data, chunk_size);
+                maximum = data[chunk_size - 1]; // minimum will be temp_data[0]
+                MPI_Sendrecv(&maximum, 1, MPI_FLOAT, rank + 1, 2, &minimum, 1, MPI_FLOAT, rank + 1, 2, MPI_COMM_ACTIVE, &stat);
+                rtn_odd = maximum <= minimum ? 0 : 1; // if current data's maximum smaller then backward data's minimum, that is, no swap will happen
+                if(rtn_odd){ // only change data when merge will happen
+                    if(rank != final_rank - 1){
+                        MPI_Sendrecv(data, chunk_size, MPI_FLOAT, rank + 1, 1, temp_data, chunk_size, MPI_FLOAT, rank + 1, 1, MPI_COMM_ACTIVE, &stat);
+                        merge_back(&data, temp_data, chunk_size);
+                    }
+                    else{
+                        MPI_Sendrecv(data, chunk_size, MPI_FLOAT, rank + 1, 1, final_rank_data, final_chunk_size, MPI_FLOAT, rank + 1, 1, MPI_COMM_ACTIVE, &stat);
+                        merge_back(&data, final_rank_data, chunk_size);
+                    }
                 }
-                else{
-                    MPI_Sendrecv(data, chunk_size, MPI_FLOAT, rank + 1, 1, final_rank_data, final_chunk_size, MPI_FLOAT, rank + 1, 1, MPI_COMM_ACTIVE, &stat);
-                    rtn_odd = merge_back(&data, final_rank_data, chunk_size);
-                }   
             }
             else if(rank % 2 == 0 && rank != 0){ // pass forward
-                if(rank != final_rank)
-                    MPI_Sendrecv(data, chunk_size, MPI_FLOAT, rank - 1, 1, temp_data, chunk_size, MPI_FLOAT, rank - 1, 1, MPI_COMM_ACTIVE, &stat);
-                else
-                    MPI_Sendrecv(data, chunk_size, MPI_FLOAT, rank - 1, 1, temp_data, normal_chunk_size, MPI_FLOAT, rank - 1, 1, MPI_COMM_ACTIVE, &stat);
-                rtn_odd = merge_front(&data, temp_data, chunk_size, normal_chunk_size);
+                minimum = data[0]; // maximum will be temp_data[chunk_size - 1]
+                MPI_Sendrecv(&minimum, 1, MPI_FLOAT, rank - 1, 2, &maximum, 1, MPI_FLOAT, rank - 1, 2, MPI_COMM_ACTIVE, &stat);
+                rtn_odd = maximum <= minimum ? 0 : 1; // if current data's minimum bigger then forward data's maximum, that is, no swap will happen
+                if(rtn_odd){ // only change data when merge will happen
+                    if(rank != final_rank)
+                        MPI_Sendrecv(data, chunk_size, MPI_FLOAT, rank - 1, 1, temp_data, chunk_size, MPI_FLOAT, rank - 1, 1, MPI_COMM_ACTIVE, &stat);
+                    else
+                        MPI_Sendrecv(data, chunk_size, MPI_FLOAT, rank - 1, 1, temp_data, normal_chunk_size, MPI_FLOAT, rank - 1, 1, MPI_COMM_ACTIVE, &stat);
+                    merge_front(&data, temp_data, chunk_size, normal_chunk_size);
+                }
             }
+            odd_even_flag = 1;
         }
 
+        // termination checking
         rtn = rtn_even + rtn_odd;
         MPI_Allreduce(&rtn, &not_done, 1, MPI_INT, MPI_SUM, MPI_COMM_ACTIVE); // if any change happened in even or odd phase, it will continue
-        odd_even_flag = 1;
     }
 
     MPI_File_open(MPI_COMM_ACTIVE, output_filename, MPI_MODE_CREATE|MPI_MODE_WRONLY, MPI_INFO_NULL, &output_file);
