@@ -104,8 +104,8 @@ int main(int argc, char** argv) {
     /* initialization */
     pthread_t threads[ncpus];
     data thread_data[ncpus];
-    int chunk_size = height / ncpus;
-    int remainder = height & ncpus;
+    int chunk_size = height / ncpus; // row partition
+    int remainder = height % ncpus;
     int now_start = 0, now_end = 0;
     
     /* allocate memory for image */

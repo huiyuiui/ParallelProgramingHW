@@ -8,6 +8,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <mpi.h>
+#include <omp.h>
+
+int iters, width, height;
+double left, right, lower, upper;
 
 void write_png(const char* filename, int iters, int width, int height, const int* buffer) {
     FILE* fp = fopen(filename, "wb");
@@ -47,48 +52,84 @@ void write_png(const char* filename, int iters, int width, int height, const int
 }
 
 int main(int argc, char** argv) {
-    /* detect how many CPUs are available */
-    cpu_set_t cpu_set;
-    sched_getaffinity(0, sizeof(cpu_set), &cpu_set);
-    printf("%d cpus available\n", CPU_COUNT(&cpu_set));
+    int mpi_rank, mpi_rank_size, omp_threads;
+    MPI_Status stat;
+
+    MPI_Init(&argc, &argv);
+
+    MPI_Comm_size(MPI_COMM_WORLD, &mpi_rank_size);
+    MPI_Comm_rank(MPI_COMM_WORLD, &mpi_rank);
+    omp_threads = omp_get_max_threads();
 
     /* argument parsing */
     assert(argc == 9);
     const char* filename = argv[1];
-    int iters = strtol(argv[2], 0, 10);
-    double left = strtod(argv[3], 0);
-    double right = strtod(argv[4], 0);
-    double lower = strtod(argv[5], 0);
-    double upper = strtod(argv[6], 0);
-    int width = strtol(argv[7], 0, 10);
-    int height = strtol(argv[8], 0, 10);
+    iters = strtol(argv[2], 0, 10);
+    left = strtod(argv[3], 0); // real lower boundary
+    right = strtod(argv[4], 0); // real upper boundary
+    lower = strtod(argv[5], 0); // imaginary lower bound
+    upper = strtod(argv[6], 0); // imaginary upper bound
+    width = strtol(argv[7], 0, 10);  // image width
+    height = strtol(argv[8], 0, 10); // image height
+
+    /* initialization */
+    int chunk_size = height / mpi_rank_size;
+    int remainder = height % mpi_rank_size;
+    int start, end;
+    int thread_chunk = width / omp_threads;
+    if(mpi_rank < remainder){
+        start = mpi_rank * chunk_size + mpi_rank;
+        end = start + chunk_size + 1;
+    }
+    else{
+        start = mpi_rank * chunk_size + remainder;
+        end = start + chunk_size;
+    }
 
     /* allocate memory for image */
-    int* image = (int*)malloc(width * height * sizeof(int));
+    // image = new int[height * width];
+    int* image = new int[height * width]();
     assert(image);
 
     /* mandelbrot set */
-    for (int j = 0; j < height; ++j) {
+    for (int j = start; j < end; j++) {
         double y0 = j * ((upper - lower) / height) + lower;
-        for (int i = 0; i < width; ++i) {
-            double x0 = i * ((right - left) / width) + left;
+        #pragma omp parallel num_threads(omp_threads) shared(image, y0)
+        {
+            #pragma omp for schedule(static, thread_chunk)
+            for (int i = 0; i < width; ++i) {
+                double x0 = i * ((right - left) / width) + left;
 
-            int repeats = 0;
-            double x = 0;
-            double y = 0;
-            double length_squared = 0;
-            while (repeats < iters && length_squared < 4) {
-                double temp = x * x - y * y + x0;
-                y = 2 * x * y + y0;
-                x = temp;
-                length_squared = x * x + y * y;
-                ++repeats;
+                int repeats = 0;
+                double x = 0;
+                double y = 0;
+                double length_squared = 0;
+                while (repeats < iters && length_squared < 4) {
+                    double temp = x * x - y * y + x0;
+                    y = 2 * x * y + y0;
+                    x = temp;
+                    length_squared = x * x + y * y;
+                    ++repeats;
+                }
+                image[j * width + i] = repeats;
             }
-            image[j * width + i] = repeats;
         }
     }
 
-    /* draw and cleanup */
-    write_png(filename, iters, width, height, image);
-    free(image);
+    if(mpi_rank == 0){
+        int* final_image = new int[height * width]();
+        assert(final_image);
+        MPI_Reduce(image, final_image, height * width, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
+        /* draw and cleanup */
+        write_png(filename, iters, width, height, final_image);
+        free(image);
+        free(final_image);
+    }
+    else{
+        MPI_Reduce(image, NULL, height * width, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
+        free(image);
+    }
+
+    MPI_Finalize();
+    return 0;
 }
