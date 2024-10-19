@@ -33,8 +33,8 @@ void* mandelbrot_set(void* arg){
         __m512d y0_vec = _mm512_set1_pd(y0);
         int i;
 
-        for(i = 0; i + vec_size < width; i += vec_size){
-            double x0_vals[8] = {
+        for(i = 0; i + vec_size <= width; i += vec_size){
+            double x0_vals[vec_size] = {
                 (i + 0) * x_offset + left,
                 (i + 1) * x_offset + left,
                 (i + 2) * x_offset + left,
