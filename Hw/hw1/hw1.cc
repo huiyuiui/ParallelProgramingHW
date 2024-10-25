@@ -17,15 +17,17 @@ void merge_back(float** data_ptr, float* temp, int chunk_size){
     now_idx = back_idx = 0;
 
     float* merged_data = new float[chunk_size];
+    float* merged_ptr = merged_data;
     for(int i = 0; i < chunk_size; i++){
-        if(data[now_idx] <= temp[back_idx]){
-            merged_data[i] = data[now_idx];
-            now_idx += 1;
+        if(*data <= *temp){
+            *merged_ptr = *data;
+            data++;
         }
         else{
-            merged_data[i] = temp[back_idx];
-            back_idx += 1;
+            *merged_ptr = *temp;
+            temp++;
         }
+        merged_ptr++;
     }
 
     std::swap(*data_ptr, merged_data);
@@ -42,15 +44,21 @@ void merge_front(float** data_ptr, float* temp, int chunk_size, int another_chun
     front_idx = another_chunk_size - 1;
 
     float* merged_data = new float[chunk_size];
+    float* merged_ptr = merged_data; 
+    data += chunk_size - 1;
+    temp += another_chunk_size - 1;
+    merged_ptr += chunk_size - 1;
     for(int i = chunk_size - 1; i >= 0; i--){
-        if(data[now_idx] < temp[front_idx] && front_idx >= 0){ // front_idx < 0 case only happens in final rank
-            merged_data[i] = temp[front_idx];
-            front_idx -= 1;
+        if(*data < *temp && front_idx >= 0){ // front_idx < 0 case only happens in final rank
+            *merged_ptr = *temp;
+            temp--;
+            front_idx--;
         }
         else{
-            merged_data[i] = data[now_idx];
-            now_idx -= 1;
+            *merged_ptr = *data;
+            data--;
         }
+        merged_ptr--;
     }
 
     std::swap(*data_ptr, merged_data);
