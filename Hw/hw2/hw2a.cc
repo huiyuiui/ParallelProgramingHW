@@ -11,24 +11,20 @@
 #include <pthread.h>
 #include <immintrin.h>
 
+int ncpus;
 int iters, width, height;
 double left, right, lower, upper;
 int* image;
 
-typedef struct data{
-    int start, end;
-    int thread_num;
-} data;
-
-void* mandelbrot_set(void* arg){
-    data* thread_data = (data*)arg;
+void* mandelbrot_set(void* thread_Id){
+    int thread_id = *(int*)thread_Id;
 
     int vec_size = 8; // avx512: 8 double per register
     double y_offset = ((upper - lower) / height);
     double x_offset = ((right - left) / width);
 
     /* calculation */
-    for(int j = thread_data->start; j < thread_data->end; j++){
+    for(int j = thread_id; j < height; j += ncpus){
         double y0 = j * y_offset + lower;
         __m512d y0_vec = _mm512_set1_pd(y0);
         int i;
@@ -63,14 +59,10 @@ void* mandelbrot_set(void* arg){
                 if(mask == 0) break; // if length_squared all greater or equal than four, mask will all be zero
                 
                 /* vectorize computation */
-                // x_temp = x * x - y * y + x0
-                __m512d sub_result = _mm512_sub_pd(x_square, y_square);
-                __m512d x_temp = _mm512_add_pd(sub_result, x0_vec);
+                __m512d x_temp = _mm512_add_pd(_mm512_sub_pd(x_square, y_square), x0_vec);
 
                 // y = 2 * x * y + y0;
-                __m512d two_x = _mm512_mul_pd(two_vec, x_vec);
-                __m512d two_x_y = _mm512_mul_pd(two_x, y_vec);
-                y_vec = _mm512_add_pd(two_x_y, y0_vec);
+                y_vec = _mm512_add_pd(_mm512_mul_pd(_mm512_mul_pd(two_vec, x_vec), y_vec), y0_vec);
 
                 x_vec = x_temp;
 
@@ -123,7 +115,7 @@ void write_png(const char* filename, int iters, int width, int height, const int
                  PNG_COMPRESSION_TYPE_DEFAULT, PNG_FILTER_TYPE_DEFAULT);
     png_set_filter(png_ptr, 0, PNG_NO_FILTERS);
     png_write_info(png_ptr, info_ptr);
-    png_set_compression_level(png_ptr, 1);
+    png_set_compression_level(png_ptr, 0);
     size_t row_size = 3 * width * sizeof(png_byte);
     png_bytep row = (png_bytep)malloc(row_size);
     for (int y = 0; y < height; ++y) {
@@ -152,7 +144,7 @@ int main(int argc, char** argv) {
     /* detect how many CPUs are available */
     cpu_set_t cpu_set;
     sched_getaffinity(0, sizeof(cpu_set), &cpu_set);
-    int ncpus = CPU_COUNT(&cpu_set);
+    ncpus = CPU_COUNT(&cpu_set);
     printf("%d cpus available\n", ncpus);
 
     /* argument parsing */
@@ -168,29 +160,16 @@ int main(int argc, char** argv) {
 
     /* initialization */
     pthread_t threads[ncpus];
-    data thread_data[ncpus];
-    int chunk_size = height / ncpus; // row partition
-    int remainder = height % ncpus;
-    int now_start = 0, now_end = 0;
-    
+    int threads_id[ncpus];
+
     /* allocate memory for image */
     image = new int[height * width];
     assert(image);
     
     /* create threads */
     for(int t = 0; t < ncpus; t++){
-        now_start = now_end; // end is non-inclusive
-        if(remainder > 0){
-            now_end = now_start + chunk_size + 1;
-            remainder--;
-        }
-        else now_end = now_start + chunk_size;
-
-        thread_data[t].start = now_start;
-        thread_data[t].end = now_end;
-        thread_data[t].thread_num = t;
-
-        int rc = pthread_create(&threads[t], NULL, mandelbrot_set, (void*)&thread_data[t]);
+        threads_id[t] = t;
+        int rc = pthread_create(&threads[t], NULL, mandelbrot_set, (void *)&threads_id[t]);
         if(rc){
 			printf("ERROR; return code from pthread_create() is %d\n", rc);
             exit(-1);

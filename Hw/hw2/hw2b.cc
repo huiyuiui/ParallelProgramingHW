@@ -27,7 +27,7 @@ void write_png(const char* filename, int iters, int width, int height, const int
                  PNG_COMPRESSION_TYPE_DEFAULT, PNG_FILTER_TYPE_DEFAULT);
     png_set_filter(png_ptr, 0, PNG_NO_FILTERS);
     png_write_info(png_ptr, info_ptr);
-    png_set_compression_level(png_ptr, 1);
+    png_set_compression_level(png_ptr, 0);
     size_t row_size = 3 * width * sizeof(png_byte);
     png_bytep row = (png_bytep)malloc(row_size);
     for (int y = 0; y < height; ++y) {
@@ -75,19 +75,7 @@ int main(int argc, char** argv) {
 
     /* initialization */
     int chunk_size = height / mpi_rank_size;
-    int remainder = height % mpi_rank_size;
-    int start, end;
     int vec_size = 8; // avx512: 8 double per register
-    int thread_remaining = width % (omp_threads * vec_size); 
-    int thread_chunk = (width - thread_remaining) / omp_threads; // to make width is divisible by chunk
-    if(mpi_rank < remainder){
-        start = mpi_rank * chunk_size + mpi_rank;
-        end = start + chunk_size + 1;
-    }
-    else{
-        start = mpi_rank * chunk_size + remainder;
-        end = start + chunk_size;
-    }
 
     /* allocate memory for image */
     int* image = new int[height * width]();
@@ -96,72 +84,66 @@ int main(int argc, char** argv) {
     /* mandelbrot set */
     double y_offset = ((upper - lower) / height);
     double x_offset = ((right - left) / width);
-    for (int j = start; j < end; j++) {
+    #pragma omp parallel for schedule(dynamic) shared(image)
+    for (int j = mpi_rank; j < height; j += mpi_rank_size) {
         double y0 = j * ((upper - lower) / height) + lower;
         __m512d y0_vec = _mm512_set1_pd(y0);
+        int i;
 
-        #pragma omp parallel num_threads(omp_threads) shared(image, y0)
-        {
-            #pragma omp for schedule(dynamic, 1)
-            for (int i = 0; i < (width - thread_remaining); i += vec_size) {
-                double x0_vals[vec_size] = {
-                    (i + 0) * x_offset + left,
-                    (i + 1) * x_offset + left,
-                    (i + 2) * x_offset + left,
-                    (i + 3) * x_offset + left,
-                    (i + 4) * x_offset + left,
-                    (i + 5) * x_offset + left,
-                    (i + 6) * x_offset + left,
-                    (i + 7) * x_offset + left
-                };
+        for (i = 0; i + vec_size <= width; i += vec_size) {
+            double x0_vals[vec_size] = {
+                (i + 0) * x_offset + left,
+                (i + 1) * x_offset + left,
+                (i + 2) * x_offset + left,
+                (i + 3) * x_offset + left,
+                (i + 4) * x_offset + left,
+                (i + 5) * x_offset + left,
+                (i + 6) * x_offset + left,
+                (i + 7) * x_offset + left
+            };
 
-                // initialize avx512 to compute
-                __m512d x0_vec = _mm512_loadu_pd(x0_vals);   
-                __m512i repeats_vec = _mm512_setzero_si512();
-                __m512d x_vec = _mm512_setzero_pd();
-                __m512d y_vec = _mm512_setzero_pd();
-                __m512d length_squared = _mm512_setzero_pd();
-                __m512d two_vec = _mm512_set1_pd(2.0);
-                __m512d four_vec = _mm512_set1_pd(4.0);
-                __m512d x_square = _mm512_setzero_pd();
-                __m512d y_square = _mm512_setzero_pd();
+            // initialize avx512 to compute
+            __m512d x0_vec = _mm512_loadu_pd(x0_vals);   
+            __m512i repeats_vec = _mm512_setzero_si512();
+            __m512d x_vec = _mm512_setzero_pd();
+            __m512d y_vec = _mm512_setzero_pd();
+            __m512d length_squared = _mm512_setzero_pd();
+            __m512d two_vec = _mm512_set1_pd(2.0);
+            __m512d four_vec = _mm512_set1_pd(4.0);
+            __m512d x_square = _mm512_setzero_pd();
+            __m512d y_square = _mm512_setzero_pd();
 
-                // manderbrot set calculate
-                for(int k = 0; k < iters; k++) {
-                    // termination check
-                    __mmask8 mask = _mm512_cmplt_pd_mask(length_squared, four_vec); // decide which element will be calculate
-                    if(mask == 0) break; // if length_squared all greater or equal than four, mask will all be zero
-                    
-                    /* vectorize computation */
-                    // x_temp = x * x - y * y + x0
-                    __m512d sub_result = _mm512_sub_pd(x_square, y_square);
-                    __m512d x_temp = _mm512_add_pd(sub_result, x0_vec);
+            // manderbrot set calculate
+            for(int k = 0; k < iters; k++) {
+                // termination check
+                __mmask8 mask = _mm512_cmplt_pd_mask(length_squared, four_vec); // decide which element will be calculate
+                if(mask == 0) break; // if length_squared all greater or equal than four, mask will all be zero
+                
+                /* vectorize computation */
+                __m512d x_temp = _mm512_add_pd(_mm512_sub_pd(x_square, y_square), x0_vec);
 
-                    // y = 2 * x * y + y0;
-                    __m512d two_x = _mm512_mul_pd(two_vec, x_vec);
-                    __m512d two_x_y = _mm512_mul_pd(two_x, y_vec);
-                    y_vec = _mm512_add_pd(two_x_y, y0_vec);
+                // y = 2 * x * y + y0;
+                y_vec = _mm512_add_pd(_mm512_mul_pd(_mm512_mul_pd(two_vec, x_vec), y_vec), y0_vec);
 
-                    x_vec = x_temp;
+                x_vec = x_temp;
 
-                    x_square = _mm512_mul_pd(x_vec, x_vec);
-                    y_square = _mm512_mul_pd(y_vec, y_vec);
+                x_square = _mm512_mul_pd(x_vec, x_vec);
+                y_square = _mm512_mul_pd(y_vec, y_vec);
 
-                    // length_squared = x * x + y * y
-                    length_squared = _mm512_add_pd(x_square, y_square);
-                    // only update those elements less than 4
-                    repeats_vec = _mm512_mask_add_epi64(repeats_vec, mask, repeats_vec, _mm512_set1_epi64(1));
-                }
-
-                int64_t repeats[8];
-                _mm512_storeu_si512((__m512i*)repeats, repeats_vec);
-                for(int vk = 0; vk < vec_size; vk++)
-                    image[j * width + i + vk] = repeats[vk];
+                // length_squared = x * x + y * y
+                length_squared = _mm512_add_pd(x_square, y_square);
+                // only update those elements less than 4
+                repeats_vec = _mm512_mask_add_epi64(repeats_vec, mask, repeats_vec, _mm512_set1_epi64(1));
             }
+
+            int64_t repeats[8];
+            _mm512_storeu_si512((__m512i*)repeats, repeats_vec);
+            for(int vk = 0; vk < vec_size; vk++)
+                image[j * width + i + vk] = repeats[vk];
         }
 
         // remaining elements
-        for(int i = (width - thread_remaining); i < width; i++){
+        for(; i < width; i++){
             double x0 = i * ((right - left) / width) + left;
             int repeats = 0;
             double x = 0;
