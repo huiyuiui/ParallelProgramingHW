@@ -1,7 +1,6 @@
 CC = gcc
 CXX = g++
 LDLIBS = -lpng
-# CFLAGS = -lm -O3 -Wall -Wextra -march=native -fno-expensive-optimizations
 CFLAGS = -lm -O1 -mavx512f
 hw2a: CFLAGS += -pthread
 hw2b: CC = mpicc
