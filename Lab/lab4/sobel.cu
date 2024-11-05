@@ -10,6 +10,8 @@
 #define xBound X / 2
 #define yBound Y / 2
 #define SCALE 8
+#define BLOCK_SIZE_X 16
+#define BLOCK_SIZE_Y 16
 
 int read_png(const char* filename, unsigned char** image, unsigned* height, 
              unsigned* width, unsigned* channels) {
@@ -104,51 +106,142 @@ inline __device__ int bound_check(int val, int lower, int upper) {
 
 __global__ void sobel(unsigned char *s, unsigned char *t, unsigned height, unsigned width, unsigned channels) {
 
-    int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    double val[Z][3];
-    if (tid >= height) return;
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
 
-    int y = tid;
-    for (int x = 0; x < width; ++x) {
-        /* Z axis of mask */
-        for (int i = 0; i < Z; ++i) {
+    if (x >= width || y >= height) return;
 
-            val[i][2] = 0.;
-            val[i][1] = 0.;
-            val[i][0] = 0.;
+    const int shared_mem_height = BLOCK_SIZE_Y + 2 * yBound;
+    const int shared_mem_width = BLOCK_SIZE_X + 2 * xBound;
+    __shared__ unsigned char shared_mem[shared_mem_height][shared_mem_width][3];
 
-            /* Y and X axis of mask */
-            for (int v = -yBound; v <= yBound; ++v) {
-                for (int u = -xBound; u <= xBound; ++u) {
-                    if (bound_check(x + u, 0, width) && bound_check(y + v, 0, height)) {
-                        const unsigned char R = s[channels * (width * (y + v) + (x + u)) + 2];
-                        const unsigned char G = s[channels * (width * (y + v) + (x + u)) + 1];
-                        const unsigned char B = s[channels * (width * (y + v) + (x + u)) + 0];
-                        val[i][2] += R * mask[i][u + xBound][v + yBound];
-                        val[i][1] += G * mask[i][u + xBound][v + yBound];
-                        val[i][0] += B * mask[i][u + xBound][v + yBound];
-                    }
-                }
+    // shift offset
+    int shared_x = threadIdx.x + xBound;
+    int shared_y = threadIdx.y + yBound;
+
+    for (int c = 0; c < channels; ++c) 
+        shared_mem[shared_y][shared_x][c] = s[channels * (width * y + x) + c];
+    
+    // Boundary
+    {
+        // left 
+        if(threadIdx.x < xBound){
+            if(bound_check(x - xBound, 0 , width))
+                for (int c = 0; c < channels; ++c)
+                    shared_mem[shared_y][shared_x - xBound][c] = s[channels * (width * y + (x - xBound)) + c];
+            else 
+                for (int c = 0; c < channels; ++c)
+                    shared_mem[shared_y][shared_x - xBound][c] = 0; // padding
+        }
+
+        // right
+        if(threadIdx.x >= blockDim.x - xBound){
+            if(bound_check(x + xBound, 0 , width))
+                for (int c = 0; c < channels; ++c)
+                    shared_mem[shared_y][shared_x + xBound][c] = s[channels * (width * y + (x + xBound)) + c];
+            else 
+                for (int c = 0; c < channels; ++c)
+                    shared_mem[shared_y][shared_x + xBound][c] = 0; // padding
+        }
+
+        // up
+        if(threadIdx.y < yBound){
+            if(bound_check(y - yBound, 0 , height))
+                for (int c = 0; c < channels; ++c)
+                    shared_mem[shared_y - yBound][shared_x][c] = s[channels * (width * (y - yBound) + x) + c];
+            else 
+                for (int c = 0; c < channels; ++c)
+                    shared_mem[shared_y - yBound][shared_x][c] = 0; // padding
+        }
+
+        // down
+        if(threadIdx.y >= blockDim.y - yBound){
+            if(bound_check(y + yBound, 0 , height))
+                for (int c = 0; c < channels; ++c)
+                    shared_mem[shared_y + yBound][shared_x][c] = s[channels * (width * (y + yBound) + x) + c];
+            else
+                for (int c = 0; c < channels; ++c)
+                    shared_mem[shared_y + yBound][shared_x][c] = 0; // padding
+        }
+
+        // left-upper
+        if(threadIdx.x < xBound && threadIdx.y < yBound){
+            if(bound_check(x - xBound, 0 , width) && bound_check(y - yBound, 0 , height))
+                for (int c = 0; c < channels; ++c)
+                    shared_mem[shared_y - yBound][shared_x - xBound][c] = s[channels * (width * (y - yBound) + (x - xBound)) + c];
+            else
+                for (int c = 0; c < channels; ++c)
+                    shared_mem[shared_y - yBound][shared_x - xBound][c] = 0; // padding
+        }
+
+        // right-upper
+        if(threadIdx.x >= blockDim.x - xBound && threadIdx.y < yBound){
+            if(bound_check(x + xBound, 0 , width) && bound_check(y - yBound, 0 , height))
+                for (int c = 0; c < channels; ++c)
+                    shared_mem[shared_y - yBound][shared_x + xBound][c] = s[channels * (width * (y - yBound) + (x + xBound)) + c];
+            else
+                for (int c = 0; c < channels; ++c)
+                    shared_mem[shared_y - yBound][shared_x + xBound][c] = 0; // padding
+        }
+
+        // left-lower
+        if(threadIdx.x < xBound && threadIdx.y >= blockDim.y - yBound){
+            if(bound_check(x - xBound, 0 , width) && bound_check(y + yBound, 0 , height))
+                for (int c = 0; c < channels; ++c)
+                    shared_mem[shared_y + yBound][shared_x - xBound][c] = s[channels * (width * (y + yBound) + (x - xBound)) + c];
+            else
+                for (int c = 0; c < channels; ++c)
+                    shared_mem[shared_y - yBound][shared_x + xBound][c] = 0; // padding
+        }
+
+        // right-lower
+        if(threadIdx.x >= blockDim.x - xBound && threadIdx.y >= blockDim.y - yBound){
+            if(bound_check(x + xBound, 0 , width) && bound_check(y + yBound, 0 , height))
+                for (int c = 0; c < channels; ++c)
+                    shared_mem[shared_y + yBound][shared_x + xBound][c] = s[channels * (width * (y + yBound) + (x + xBound)) + c];
+            else
+                for (int c = 0; c < channels; ++c)
+                    shared_mem[shared_y + yBound][shared_x + xBound][c] = 0; // padding
+        }
+    }
+
+    __syncthreads(); // to ensure that all elements in shared memory are initialized
+
+    float val[Z][3] = {0};
+
+    for (int i = 0; i < Z; ++i) {
+        for (int v = -yBound; v <= yBound; ++v) {
+            for (int u = -xBound; u <= xBound; ++u) {
+                // remove boundary checking in order to increase performance
+                int sm_x = shared_x + u;
+                int sm_y = shared_y + v;
+                const unsigned char R = shared_mem[sm_y][sm_x][2];
+                const unsigned char G = shared_mem[sm_y][sm_x][1];
+                const unsigned char B = shared_mem[sm_y][sm_x][0];
+                val[i][2] += R * mask[i][u + xBound][v + yBound];
+                val[i][1] += G * mask[i][u + xBound][v + yBound];
+                val[i][0] += B * mask[i][u + xBound][v + yBound];
             }
         }
-        double totalR = 0.;
-        double totalG = 0.;
-        double totalB = 0.;
-        for (int i = 0; i < Z; ++i) {
-            totalR += val[i][2] * val[i][2];
-            totalG += val[i][1] * val[i][1];
-            totalB += val[i][0] * val[i][0];
-        }
-        totalR = sqrt(totalR) / SCALE;
-        totalG = sqrt(totalG) / SCALE;
-        totalB = sqrt(totalB) / SCALE;
-        const unsigned char cR = (totalR > 255.) ? 255 : totalR;
-        const unsigned char cG = (totalG > 255.) ? 255 : totalG;
-        const unsigned char cB = (totalB > 255.) ? 255 : totalB;
-        t[channels * (width * y + x) + 2] = cR;
-        t[channels * (width * y + x) + 1] = cG;
-        t[channels * (width * y + x) + 0] = cB;
     }
+
+    float totalR = 0.;
+    float totalG = 0.;
+    float totalB = 0.;
+    for (int i = 0; i < Z; ++i) {
+        totalR += val[i][2] * val[i][2];
+        totalG += val[i][1] * val[i][1];
+        totalB += val[i][0] * val[i][0];
+    }
+    totalR = sqrtf(totalR) / SCALE;
+    totalG = sqrtf(totalG) / SCALE;
+    totalB = sqrtf(totalB) / SCALE;
+    const unsigned char cR = (totalR > 255.) ? 255 : totalR;
+    const unsigned char cG = (totalG > 255.) ? 255 : totalG;
+    const unsigned char cB = (totalB > 255.) ? 255 : totalB;
+    t[channels * (width * y + x) + 2] = cR;
+    t[channels * (width * y + x) + 1] = cG;
+    t[channels * (width * y + x) + 0] = cB;
 }
 
 int main(int argc, char **argv) {
@@ -174,11 +267,13 @@ int main(int argc, char **argv) {
     cudaMemcpy(dsrc, src, height * width * channels * sizeof(unsigned char), cudaMemcpyHostToDevice);
 
     // decide to use how many blocks and threads
-    const int num_threads = 256;
-    const int num_blocks = height / num_threads + 1;
+
+    dim3 blockSize(BLOCK_SIZE_X, BLOCK_SIZE_Y);
+    dim3 gridSize((width + blockSize.x - 1) / blockSize.x,
+                  (height + blockSize.y - 1) / blockSize.y);
 
     // launch cuda kernel
-    sobel<<<num_blocks, num_threads>>>(dsrc, ddst, height, width, channels);
+    sobel<<<gridSize, blockSize>>>(dsrc, ddst, height, width, channels);
 
     // cudaMemcpy(...) copy result image to host
     cudaMemcpy(dst, ddst, height * width * channels * sizeof(unsigned char), cudaMemcpyDeviceToHost);
