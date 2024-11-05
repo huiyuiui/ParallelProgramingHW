@@ -48,7 +48,7 @@
 
 ### Plots: Speedup Factor & Profile
 * **Experimental Method:**
-    * Test Case Description：所有實驗均使用testcases中的`40.txt`作為測量基準。
+    * Test Case Description：所有實驗均使用testcases中的`40.txt`作為測量基準，該testcase具有`536869888`個element，在`judge`的測試時間約為**7s**，作為測量基準應可以很好的看出各項指標。
     * Parallel Configuration：不同實驗所使用的nodes和cores基本上以**4 cores per node**做為基本實驗參數，但根據實驗目的不同會做出些許調整，具體實驗參數會在接下來的報告中再做闡述。
 * **Total Time Profile:**
     首先進行的實驗是觀察在同一個case下增加process數量時，整體執行時間的變化。該實驗參數在使用1、4和16個processes時均使用**4 cores per node**，而因為使用64個processes要allocate 16個nodes，會導致計算資源不足，所以我改成使用**8 cores per node**，也就是在使用64個processes進行實驗時，只使用了8個nodes。
