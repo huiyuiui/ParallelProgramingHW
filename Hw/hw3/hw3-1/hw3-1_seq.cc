@@ -70,19 +70,19 @@ void block_FW(int B) {
         printf("%d %d\n", r, round);
         fflush(stdout);
         /* Phase 1*/
-        cal(B, r, r, r, 1, 1);
+        cal(B, r, r, r, 1, 1); // pivot block
 
         /* Phase 2*/
-        cal(B, r, r, 0, r, 1);
-        cal(B, r, r, r + 1, round - r - 1, 1);
-        cal(B, r, 0, r, 1, r);
-        cal(B, r, r + 1, r, 1, round - r - 1);
+        cal(B, r, r, 0, r, 1); // pivot row: from 0 to now index
+        cal(B, r, r, r + 1, round - r - 1, 1); // pivot row: from now index + 1 to end
+        cal(B, r, 0, r, 1, r);  // pivot col: from 0 to now index
+        cal(B, r, r + 1, r, 1, round - r - 1); // pivot col: from now index + 1 to end
 
         /* Phase 3*/
-        cal(B, r, 0, 0, r, r);
-        cal(B, r, 0, r + 1, round - r - 1, r);
-        cal(B, r, r + 1, 0, r, round - r - 1);
-        cal(B, r, r + 1, r + 1, round - r - 1, round - r - 1);
+        cal(B, r, 0, 0, r, r); // other: left upper
+        cal(B, r, 0, r + 1, round - r - 1, r); // other: left lower
+        cal(B, r, r + 1, 0, r, round - r - 1); // other: right upper
+        cal(B, r, r + 1, r + 1, round - r - 1, round - r - 1); // ohter: right lower
     }
 }
 
@@ -91,23 +91,25 @@ void cal(
     int block_end_x = block_start_x + block_height;
     int block_end_y = block_start_y + block_width;
 
+    // outer for loop: how many blocks in this calculation
     for (int b_i = block_start_x; b_i < block_end_x; ++b_i) {
         for (int b_j = block_start_y; b_j < block_end_y; ++b_j) {
             // To calculate B*B elements in the block (b_i, b_j)
             // For each block, it need to compute B times
-            for (int k = Round * B; k < (Round + 1) * B && k < n; ++k) {
+            for (int k = Round * B; k < (Round + 1) * B && k < n; ++k) { // each phase will perform B iterations
                 // To calculate original index of elements in the block (b_i, b_j)
                 // For instance, original index of (0,0) in block (1,2) is (2,5) for V=6,B=2
-                int block_internal_start_x = b_i * B;
-                int block_internal_end_x = (b_i + 1) * B;
-                int block_internal_start_y = b_j * B;
-                int block_internal_end_y = (b_j + 1) * B;
+                // (b_i, b_j) is block index
+                int global_start_x = b_i * B;
+                int global_end_x = (b_i + 1) * B;
+                int global_start_y = b_j * B;
+                int global_end_y = (b_j + 1) * B;
 
-                if (block_internal_end_x > n) block_internal_end_x = n;
-                if (block_internal_end_y > n) block_internal_end_y = n;
+                if (global_end_x > n) global_end_x = n;
+                if (global_end_y > n) global_end_y = n;
 
-                for (int i = block_internal_start_x; i < block_internal_end_x; ++i) {
-                    for (int j = block_internal_start_y; j < block_internal_end_y; ++j) {
+                for (int i = global_start_x; i < global_end_x; ++i) {
+                    for (int j = global_start_y; j < global_end_y; ++j) {
                         if (Dist[i][k] + Dist[k][j] < Dist[i][j]) {
                             Dist[i][j] = Dist[i][k] + Dist[k][j];
                         }
