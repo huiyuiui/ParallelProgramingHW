@@ -51,7 +51,7 @@ void output(char* outFileName) {
 
 int ceil(int a, int b) { return (a + b - 1) / b; }
 
-__global__ void calKernel(unsigned int* Dist, int n, int B, int Round, int block_start_x, int block_start_y) {
+__global__ void calKernel(unsigned int* Dist, int n, int B, int Round, int block_start_y, int block_start_x) {
 
     // block index
     int block_x = block_start_x + blockIdx.x;
@@ -61,52 +61,25 @@ __global__ void calKernel(unsigned int* Dist, int n, int B, int Round, int block
     int i = block_y * B + threadIdx.y;
     int j = block_x * B + threadIdx.x;
 
+    if(i >= n || j >= n) return;
+
     // init pivot index
     int pivot_start = Round * B;
     int pivot_end = min((Round + 1) * B, n);
-    int pivot_ki = pivot_start + threadIdx.y; 
-    int pivot_kj = pivot_start + threadIdx.x;
-
-    // move to share memory
-    __shared__ unsigned int shared_dist[BLOCK_SIZE][BLOCK_SIZE];
-    __shared__ unsigned int shared_row[BLOCK_SIZE][BLOCK_SIZE];
-    __shared__ unsigned int shared_col[BLOCK_SIZE][BLOCK_SIZE];
-
-    // boundary
-    {
-        if(i < n && j < n)
-            shared_dist[threadIdx.y][threadIdx.x] = Dist[i * n + j];
-        else
-            shared_dist[threadIdx.y][threadIdx.x] = INF;
-
-        if(pivot_kj < pivot_end && i < n)
-            shared_row[threadIdx.y][threadIdx.x] = Dist[i * n + pivot_kj];
-        else
-            shared_row[threadIdx.y][threadIdx.x] = INF;
-        
-        if(pivot_ki < pivot_end && j < n)
-            shared_col[threadIdx.y][threadIdx.x] = Dist[pivot_ki * n + j];
-        else
-            shared_col[threadIdx.y][threadIdx.x] = INF;
-    }
-
-    __syncthreads(); // to ensure that all elements in shared memory are initialized
 
     // For each block, it need to compute B times
-    for (int k = 0; k < pivot_end - pivot_start; ++k) { // each phase will perform B iterations
-        if(shared_row[threadIdx.y][k] + shared_col[k][threadIdx.x] < shared_dist[threadIdx.y][threadIdx.x])
-            shared_dist[threadIdx.y][threadIdx.x] = shared_row[threadIdx.y][k] + shared_col[k][threadIdx.x];
-        __syncthreads(); // wait every threads finish this round
+    for (int r = 0; r < pivot_end - pivot_start; ++r) { // each phase will perform B iterations
+        int k = pivot_start + r;
+        if(Dist[i * n + k] + Dist[k * n + j] < Dist[i * n + j])
+            Dist[i * n + j] = Dist[i * n + k] + Dist[k * n + j];
+        __syncthreads();
     }
-    
-    if(i < n && j < n)
-        Dist[i * n + j] = shared_dist[threadIdx.y][threadIdx.x];
 }
 
-void cal(int n, int B, int Round, int block_start_x, int block_start_y, int width_num_blocks, int height_num_blocks){
+void cal(int n, int B, int Round, int block_start_y, int block_start_x, int height_num_blocks, int width_num_blocks){
     dim3 blockSize(BLOCK_SIZE, BLOCK_SIZE);
     dim3 gridSize(width_num_blocks, height_num_blocks);
-    calKernel<<<gridSize, blockSize>>>(device_dist, n, B, Round, block_start_x, block_start_y);
+    calKernel<<<gridSize, blockSize>>>(device_dist, n, B, Round, block_start_y, block_start_x);
 }
 
 void block_FW(int B) {
@@ -114,20 +87,20 @@ void block_FW(int B) {
     for (int r = 0; r < round; ++r) {
         /* Phase 1*/
         // pivot block
-        dim3 blockSize(BLOCK_SIZE, BLOCK_SIZE);
-        dim3 gridSize(1, 1); // only one block need to be calculated
-        calKernel<<<gridSize, blockSize>>>(device_dist, n, BLOCK_SIZE, r, r, r);
-        
+        dim3 blockSize(B, B);
+        dim3 gridSize(1, 1);
+        calKernel<<<gridSize, blockSize>>>(device_dist, n, B, r, r, r);
+
         /* Phase 2*/
-        cal(n, B, r, r, 0, r, 1); // pivot row: from 0 to now index
-        cal(n, B, r, r, r + 1, round - r - 1, 1); // pivot row: from now index + 1 to end
-        cal(n, B, r, 0, r, 1, r);  // pivot col: from 0 to now index
-        cal(n, B, r, r + 1, r, 1, round - r - 1); // pivot col: from now index + 1 to end
+        cal(n, B, r, r, 0, 1, r); // pivot row: from 0 to now index
+        cal(n, B, r, r, r + 1, 1, round - r - 1); // pivot row: from now index + 1 to end
+        cal(n, B, r, 0, r, r, 1);  // pivot col: from 0 to now index
+        cal(n, B, r, r + 1, r, round - r - 1, 1); // pivot col: from now index + 1 to end
 
         /* Phase 3*/
         cal(n, B, r, 0, 0, r, r); // other: left upper
-        cal(n, B, r, 0, r + 1, round - r - 1, r); // other: left lower
-        cal(n, B, r, r + 1, 0, r, round - r - 1); // other: right upper
+        cal(n, B, r, 0, r + 1, r, round - r - 1); // other: right upper
+        cal(n, B, r, r + 1, 0, round - r - 1, r); // other: left lower
         cal(n, B, r, r + 1, r + 1, round - r - 1, round - r - 1); // ohter: right lower
     }
 }

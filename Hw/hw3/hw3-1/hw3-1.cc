@@ -68,21 +68,21 @@ void block_FW(int B) {
         cal(B, r, r, r, 1, 1); // pivot block
 
         /* Phase 2*/
-        cal(B, r, r, 0, r, 1); // pivot row: from 0 to now index
-        cal(B, r, r, r + 1, round - r - 1, 1); // pivot row: from now index + 1 to end
-        cal(B, r, 0, r, 1, r);  // pivot col: from 0 to now index
-        cal(B, r, r + 1, r, 1, round - r - 1); // pivot col: from now index + 1 to end
+        cal(B, r, r, 0, 1, r); // pivot row: from 0 to now index
+        cal(B, r, r, r + 1, 1, round - r - 1); // pivot row: from now index + 1 to end
+        cal(B, r, 0, r, r, 1);  // pivot col: from 0 to now index
+        cal(B, r, r + 1, r, round - r - 1, 1); // pivot col: from now index + 1 to end
 
         /* Phase 3*/
         cal(B, r, 0, 0, r, r); // other: left upper
-        cal(B, r, 0, r + 1, round - r - 1, r); // other: left lower
-        cal(B, r, r + 1, 0, r, round - r - 1); // other: right upper
+        cal(B, r, 0, r + 1, r, round - r - 1); // other: right upper
+        cal(B, r, r + 1, 0, round - r - 1, r); // other: left lower
         cal(B, r, r + 1, r + 1, round - r - 1, round - r - 1); // ohter: right lower
     }
 }
 
 void cal(
-    int B, int Round, int block_start_y, int block_start_x, int width_num_blocks, int height_num_blocks) {
+    int B, int Round, int block_start_y, int block_start_x, int height_num_blocks, int width_num_blocks) {
     int block_end_y = block_start_y + height_num_blocks;
     int block_end_x = block_start_x + width_num_blocks;
 
