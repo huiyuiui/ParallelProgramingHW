@@ -82,7 +82,6 @@ __global__ void calKernelPhase1(unsigned int* Dist, int n, int B, int Round, int
     __syncthreads();
 
     // For each block, it need to compute B times
-    // #pragma unroll
     for (int k = 0; k < SHARED_BLOCK; ++k) { // each phase will perform B iterations
         shared_dist[y][x] = min(shared_dist[y][x], shared_dist[y][k] + shared_dist[k][x]);
         shared_dist[y][x + B] = min(shared_dist[y][x + B], shared_dist[y][k] + shared_dist[k][x + B]);
@@ -119,10 +118,17 @@ __global__ void calKernelPhase2(unsigned int* Dist, int n, int row_col, int B, i
     __shared__ unsigned int shared_pivot[SHARED_BLOCK][SHARED_BLOCK];
     __shared__ unsigned int shared_dist[SHARED_BLOCK][SHARED_BLOCK];
 
-    shared_dist[y][x] = Dist[i * n + j];
-    shared_dist[y][x + B] = Dist[i * n + (j + B)];
-    shared_dist[y + B][x] = Dist[(i + B) * n + j];
-    shared_dist[y + B][x + B] = Dist[(i + B) * n + (j + B)];
+    // use registers to cache the points to be calculated
+    unsigned int vertex_0 = Dist[i * n + j];
+    unsigned int vertex_1 = Dist[i * n + (j + B)];
+    unsigned int vertex_2 = Dist[(i + B) * n + j];
+    unsigned int vertex_3 = Dist[(i + B) * n + (j + B)];
+
+    // init shared memory
+    shared_dist[y][x] = vertex_0;
+    shared_dist[y][x + B] = vertex_1;
+    shared_dist[y + B][x] = vertex_2;
+    shared_dist[y + B][x + B] = vertex_3;
     if(row_col == 0){
         shared_pivot[y][x] = Dist[i * n + (pivot_start + x)];
         shared_pivot[y][x + B] = Dist[i * n + (pivot_start + x + B)];
@@ -142,32 +148,30 @@ __global__ void calKernelPhase2(unsigned int* Dist, int n, int row_col, int B, i
     // Computation
     if(row_col == 0){ // pivot row
         // For each block, it need to compute B times
-        // #pragma unroll 32
+        #pragma unroll 64
         for (int k = 0; k < SHARED_BLOCK; ++k) {
-            shared_dist[y][x] = min(shared_dist[y][x], shared_pivot[y][k] + shared_dist[k][x]);
-            shared_dist[y][x + B] = min(shared_dist[y][x + B], shared_pivot[y][k] + shared_dist[k][x + B]);
-            shared_dist[y + B][x] = min(shared_dist[y + B][x], shared_pivot[y + B][k] + shared_dist[k][x]);
-            shared_dist[y + B][x + B] = min(shared_dist[y + B][x + B] ,shared_pivot[y + B][k] + shared_dist[k][x + B]);
-            __syncthreads();
+            vertex_0 = min(vertex_0, shared_pivot[y][k] + shared_dist[k][x]);
+            vertex_1 = min(vertex_1, shared_pivot[y][k] + shared_dist[k][x + B]);
+            vertex_2 = min(vertex_2, shared_pivot[y + B][k] + shared_dist[k][x]);
+            vertex_3 = min(vertex_3 ,shared_pivot[y + B][k] + shared_dist[k][x + B]);
         }
     }
     else if(row_col == 1){ // pivot col
         // For each block, it need to compute B times
-        // #pragma unroll 32
+        #pragma unroll 64
         for (int k = 0; k < SHARED_BLOCK; ++k) { 
-            shared_dist[y][x] = min(shared_dist[y][x], shared_dist[y][k] + shared_pivot[k][x]);
-            shared_dist[y][x + B] = min(shared_dist[y][x + B], shared_dist[y][k] + shared_pivot[k][x + B]);
-            shared_dist[y + B][x] = min(shared_dist[y + B][x], shared_dist[y + B][k] + shared_pivot[k][x]);
-            shared_dist[y + B][x + B] = min(shared_dist[y + B][x + B] ,shared_dist[y + B][k] + shared_pivot[k][x + B]);
-            __syncthreads();
+            vertex_0 = min(vertex_0, shared_dist[y][k] + shared_pivot[k][x]);
+            vertex_1 = min(vertex_1, shared_dist[y][k] + shared_pivot[k][x + B]);
+            vertex_2 = min(vertex_2, shared_dist[y + B][k] + shared_pivot[k][x]);
+            vertex_3 = min(vertex_3 ,shared_dist[y + B][k] + shared_pivot[k][x + B]);
         }
     }
 
     // write back to GPU memory
-    Dist[i * n + j] = shared_dist[y][x];
-    Dist[i * n + (j + B)] = shared_dist[y][x + B];
-    Dist[(i + B) * n + j] = shared_dist[y + B][x];
-    Dist[(i + B) * n + (j + B)] = shared_dist[y + B][x + B];
+    Dist[i * n + j] = vertex_0;
+    Dist[i * n + (j + B)] = vertex_1;
+    Dist[(i + B) * n + j] = vertex_2;
+    Dist[(i + B) * n + (j + B)] = vertex_3;
 }
 
 
@@ -188,15 +192,16 @@ __global__ void calKernelPhase3(unsigned int* Dist, int n, int B, int Round, int
     // pivot index
     int pivot_start = Round * SHARED_BLOCK;
 
-    __shared__ unsigned int shared_dist[SHARED_BLOCK][SHARED_BLOCK];
     __shared__ unsigned int shared_row[SHARED_BLOCK][SHARED_BLOCK];
     __shared__ unsigned int shared_col[SHARED_BLOCK][SHARED_BLOCK];
 
-    shared_dist[y][x] = Dist[i * n + j];
-    shared_dist[y][x + B] = Dist[i * n + (j + B)];
-    shared_dist[y + B][x] = Dist[(i + B) * n + j];
-    shared_dist[y + B][x + B] = Dist[(i + B) * n + (j + B)];
+    // use registers to cache the points to be calculated
+    unsigned int vertex_0 = Dist[i * n + j];
+    unsigned int vertex_1 = Dist[i * n + (j + B)];
+    unsigned int vertex_2 = Dist[(i + B) * n + j];
+    unsigned int vertex_3 = Dist[(i + B) * n + (j + B)];
 
+    // init shared memory
     shared_row[y][x] = Dist[i * n + (pivot_start + x)];
     shared_row[y][x + B] = Dist[i * n + (pivot_start + x + B)];
     shared_row[y + B][x] = Dist[(i + B) * n + (pivot_start + x)];
@@ -211,19 +216,19 @@ __global__ void calKernelPhase3(unsigned int* Dist, int n, int B, int Round, int
 
     // Computation
     // For each block, it need to compute B times
-    #pragma unroll 32
+    #pragma unroll 64
     for (int k = 0; k < SHARED_BLOCK; ++k) {
-        shared_dist[y][x] = min(shared_dist[y][x], shared_row[y][k] + shared_col[k][x]);
-        shared_dist[y][x + B] = min(shared_dist[y][x + B], shared_row[y][k] + shared_col[k][x + B]);
-        shared_dist[y + B][x] = min(shared_dist[y + B][x], shared_row[y + B][k] + shared_col[k][x]);
-        shared_dist[y + B][x + B] = min(shared_dist[y + B][x + B] ,shared_row[y + B][k] + shared_col[k][x + B]);
+        vertex_0 = min(vertex_0, shared_row[y][k] + shared_col[k][x]);
+        vertex_1 = min(vertex_1, shared_row[y][k] + shared_col[k][x + B]);
+        vertex_2 = min(vertex_2, shared_row[y + B][k] + shared_col[k][x]);
+        vertex_3 = min(vertex_3 ,shared_row[y + B][k] + shared_col[k][x + B]);
     }
     
     // write back to GPU memory
-    Dist[i * n + j] = shared_dist[y][x];
-    Dist[i * n + (j + B)] = shared_dist[y][x + B];
-    Dist[(i + B) * n + j] = shared_dist[y + B][x];
-    Dist[(i + B) * n + (j + B)] = shared_dist[y + B][x + B];
+    Dist[i * n + j] = vertex_0;
+    Dist[i * n + (j + B)] = vertex_1;
+    Dist[(i + B) * n + j] = vertex_2;
+    Dist[(i + B) * n + (j + B)] = vertex_3;
 }
 
 void calPhase1(int n, int B, int Round, int block_start_y, int block_start_x){
