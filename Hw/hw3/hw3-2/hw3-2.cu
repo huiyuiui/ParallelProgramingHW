@@ -48,9 +48,6 @@ void input(char* infile) {
 void output(char* outFileName) {
     FILE* outfile = fopen(outFileName, "w");
     for (int i = 0; i < n; ++i) {
-        for (int j = 0; j < n; ++j) {
-            if (host_dist_t[i * n_padded + j] >= INF) host_dist_t[i * n_padded + j] = INF;
-        }
         fwrite(&host_dist_t[i * n_padded], sizeof(unsigned int), n, outfile);
     }
     fclose(outfile);

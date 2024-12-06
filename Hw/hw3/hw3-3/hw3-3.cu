@@ -16,8 +16,7 @@ cudaDeviceProp prop;
 
 const int INF = ((1 << 30) - 1);
 int n, m, n_padded;
-unsigned int* host_dist_s;
-unsigned int* host_dist_t;
+unsigned int* host_dist;
 unsigned int* device_dist_arr[2];
 
 void input(char* infile) {
@@ -27,14 +26,14 @@ void input(char* infile) {
 
     // pad array size to multiples of 64
     n_padded = ((n + 63) / 64) * 64;
-    host_dist_s = (unsigned int*) malloc(n_padded * n_padded * sizeof(unsigned int));
+    host_dist = (unsigned int*) malloc(n_padded * n_padded * sizeof(unsigned int));
 
     for (int i = 0; i < n_padded; ++i) {
         for (int j = 0; j < n_padded; ++j) {
             if (i < n && j < n && i == j) {
-                host_dist_s[i * n_padded + j] = 0;
+                host_dist[i * n_padded + j] = 0;
             } else {
-                host_dist_s[i * n_padded + j] = INF;
+                host_dist[i * n_padded + j] = INF;
             }
         }
     }
@@ -42,7 +41,7 @@ void input(char* infile) {
     int* edges = (int*)malloc(m * 3 * sizeof(int));
     fread(edges, sizeof(int), m * 3, file);
     for (int i = 0; i < m; ++i) {
-        host_dist_s[edges[i * 3 + 0] * n_padded + edges[i * 3 + 1]] = edges[i * 3 + 2];
+        host_dist[edges[i * 3 + 0] * n_padded + edges[i * 3 + 1]] = edges[i * 3 + 2];
     }
     fclose(file);
 }
@@ -50,10 +49,7 @@ void input(char* infile) {
 void output(char* outFileName) {
     FILE* outfile = fopen(outFileName, "w");
     for (int i = 0; i < n; ++i) {
-        for (int j = 0; j < n; ++j) {
-            if (host_dist_t[i * n_padded + j] >= INF) host_dist_t[i * n_padded + j] = INF;
-        }
-        fwrite(&host_dist_t[i * n_padded], sizeof(unsigned int), n, outfile);
+        fwrite(&host_dist[i * n_padded], sizeof(unsigned int), n, outfile);
     }
     fclose(outfile);
 }
@@ -274,6 +270,7 @@ void block_FW(int B) {
     omp_set_num_threads(2);
     #pragma omp parallel
     {
+        // init parameters
         unsigned int thread_id = omp_get_thread_num();
         int round = ceil(n_padded, SHARED_BLOCK);
         int half_round = ceil(round, 2); // divide the computation range into half
@@ -287,7 +284,7 @@ void block_FW(int B) {
         cudaMalloc((void**)&device_dist_arr[thread_id], n_padded * n_padded * sizeof(unsigned int));
 
         // copy host memory to cuda
-        cudaMemcpy(device_dist_arr[thread_id] + thread_offset, host_dist_s + thread_offset, thread_range * SHARED_BLOCK * n_padded * sizeof(unsigned int), cudaMemcpyHostToDevice);
+        cudaMemcpy(device_dist_arr[thread_id], host_dist, n_padded * n_padded * sizeof(unsigned int), cudaMemcpyHostToDevice);
 
         #pragma omp barrier        
 
@@ -316,16 +313,14 @@ void block_FW(int B) {
         }
 
         // copy cuda memory back to host
-        cudaMemcpy(host_dist_t + thread_offset, device_dist_arr[thread_id] + thread_offset,  thread_range * SHARED_BLOCK * n_padded * sizeof(unsigned int), cudaMemcpyDeviceToHost);
+        cudaMemcpy(host_dist + thread_offset, device_dist_arr[thread_id] + thread_offset, thread_range * SHARED_BLOCK * n_padded * sizeof(unsigned int), cudaMemcpyDeviceToHost);
 
         cudaFree(device_dist_arr[thread_id]);
     }
 }
 
-
 int main(int argc, char* argv[]) {
     input(argv[1]);
-    host_dist_t = (unsigned int*) malloc(n_padded * n_padded * sizeof(unsigned int));
 
     cudaGetDeviceProperties(&prop, DEV_NO);
     printf("maxThreasPerBlock = %d, sharedMemPerBlock = %d\n", prop.maxThreadsPerBlock, prop.sharedMemPerBlock);
@@ -337,8 +332,7 @@ int main(int argc, char* argv[]) {
     output(argv[2]);
 
     // free memory
-    free(host_dist_s);
-    free(host_dist_t);
-
+    free(host_dist);
+    
     return 0;
 }
