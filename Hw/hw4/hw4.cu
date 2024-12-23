@@ -11,6 +11,8 @@ using namespace std;
 //======================
 #define DEV_NO 0
 #define BLOCK_SIZE 32
+#define PAD 1       
+#define PADDIM (64+PAD)
 cudaDeviceProp prop;
 
 int B, N, d;
@@ -158,10 +160,10 @@ __global__ void flash_attention_kernel(float* __restrict__ q, float* __restrict_
     int br = BLOCK_SIZE, bc = BLOCK_SIZE;
     
     // shared memory declaration 
-    __shared__ float qi[BLOCK_SIZE * 64];
-    __shared__ float kj[BLOCK_SIZE * 64];
-    __shared__ float vj[BLOCK_SIZE * 64];
-    __shared__ float oi[BLOCK_SIZE * 64];
+    __shared__ float qi[BLOCK_SIZE * PADDIM];
+    __shared__ float kj[BLOCK_SIZE * PADDIM];
+    __shared__ float vj[BLOCK_SIZE * PADDIM];
+    __shared__ float oi[BLOCK_SIZE * PADDIM];
     __shared__ float li[BLOCK_SIZE];
     __shared__ float mi[BLOCK_SIZE];
 
@@ -174,15 +176,16 @@ __global__ void flash_attention_kernel(float* __restrict__ q, float* __restrict_
     __shared__ float li_new[BLOCK_SIZE];
 
     // init shared memory
-    kj[thread_x * dim + thread_y] = k[(block_j * bc + thread_x) * dim + thread_y];
-    vj[thread_x * dim + thread_y] = v[(block_j * bc + thread_x) * dim + thread_y];
-    qi[thread_y * dim + thread_x] = q[(block_i * br + thread_y) * dim + thread_x];
-    oi[thread_y * dim + thread_x] = o[(block_i * br + thread_y) * dim + thread_x];
+    kj[thread_x * PADDIM + thread_y] = k[(block_j * bc + thread_x) * dim + thread_y];
+    vj[thread_x * PADDIM + thread_y] = v[(block_j * bc + thread_x) * dim + thread_y];
+    qi[thread_y * PADDIM + thread_x] = q[(block_i * br + thread_y) * dim + thread_x];
+    oi[thread_y * PADDIM + thread_x] = o[(block_i * br + thread_y) * dim + thread_x];
     if(dim == 64){
-        kj[thread_x * dim + (bc + thread_y)] = k[(block_j * bc + thread_x) * dim + (bc + thread_y)];
-        vj[thread_x * dim + (bc + thread_y)] = v[(block_j * bc + thread_x) * dim + (bc + thread_y)];
-        qi[thread_y * dim + (br + thread_x)] = q[(block_i * br + thread_y) * dim + (br + thread_x)];
-        oi[thread_y * dim + (br + thread_x)] = o[(block_i * br + thread_y) * dim + (br + thread_x)];
+        kj[thread_x * PADDIM + (bc + thread_y)] = k[(block_j * bc + thread_x) * dim + (bc + thread_y)];
+        vj[thread_x * PADDIM + (bc + thread_y)] = v[(block_j * bc + thread_x) * dim + (bc + thread_y)];
+
+        qi[thread_y * PADDIM + (br + thread_x)] = q[(block_i * br + thread_y) * dim + (br + thread_x)];
+        oi[thread_y * PADDIM + (br + thread_x)] = o[(block_i * br + thread_y) * dim + (br + thread_x)];
     }
     if(thread_x == 0){ // only need one thread for each row to initial li and mi
         li[thread_y] = l[block_i * br + thread_y];
@@ -195,7 +198,7 @@ __global__ void flash_attention_kernel(float* __restrict__ q, float* __restrict_
     float val = 0.0F;
     for (int t = 0; t < dim; t++)
     {
-        val += qi[thread_y * dim + t] * kj[thread_x * dim + t];
+        val += qi[thread_y * PADDIM + t] * kj[thread_x * PADDIM + t];
     }
     sij[thread_y * bc + thread_x] = val * (1.0 / sqrtf(dim));
     __syncthreads();
@@ -246,21 +249,19 @@ __global__ void flash_attention_kernel(float* __restrict__ q, float* __restrict_
     float pv_2 = 0.0F;
     for (int t = 0; t < bc; t++)
     {
-        pv_1 += pij[thread_y * bc + t] * vj[t * dim + thread_x];
+        pv_1 += pij[thread_y * bc + t] * vj[t * PADDIM + thread_x];
         if(dim == 64)
-            pv_2 += pij[thread_y * bc + t] * vj[t * dim + (bc + thread_x)];
+            pv_2 += pij[thread_y * bc + t] * vj[t * PADDIM + (bc + thread_x)];
     }
-    oi[thread_y * dim + thread_x] = (first_item * oi[thread_y * dim + thread_x] + second_item * pv_1) / li_new[thread_y];
+    oi[thread_y * PADDIM + thread_x] = (first_item * oi[thread_y * PADDIM + thread_x] + second_item * pv_1) / li_new[thread_y];
     if(dim == 64)
-        oi[thread_y * dim + (bc + thread_x)] = (first_item * oi[thread_y * dim + (bc + thread_x)] + second_item * pv_2) / li_new[thread_y];
-    
-    
+        oi[thread_y * PADDIM + (bc + thread_x)] = (first_item * oi[thread_y * PADDIM + (bc + thread_x)] + second_item * pv_2) / li_new[thread_y];
     __syncthreads();
 
     // copy memory back
-    o[(block_i * br + thread_y) * dim + thread_x] = oi[thread_y * dim + thread_x];
+    o[(block_i * br + thread_y) * dim + thread_x] = oi[thread_y * PADDIM + thread_x];
     if(dim == 64) 
-       o[(block_i * br + thread_y) * dim + (br + thread_x)] = oi[thread_y * dim + (br + thread_x)];
+        o[(block_i * br + thread_y) * dim + (br + thread_x)] = oi[thread_y * PADDIM + (br + thread_x)];
     if(thread_x == 0){
         l[block_i * br + thread_y] = li_new[thread_y];
         m[block_i * br + thread_y] = mi_new[thread_y];
