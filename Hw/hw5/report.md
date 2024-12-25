@@ -190,6 +190,15 @@ cd ~/UCX-lsalab/test/
 sbatch run.batch
 ```
 
+- 在`Multi-node`的環境下，就不能使用`shm`和`cma`進行傳輸，需要使用網路協議才能在不同`node`之間進行data的傳輸，所以，在該項實驗中，我比較了`ud_verbs`和`tcp`的效能差異，以下是實驗數據圖。
+- `Latency`:
+![圖片](https://i.imgur.com/XAnlp1k.png)
+- `Bandwidth`:
+![圖片](https://i.imgur.com/rbmHcgn.png)
+- 從兩個實驗圖中可以看出，`ud_verbs`不論在`latency`還是`bandwidth`上，效能表現都比`tcp`來得好，因為它使用了`InfiniBand`的網路進行傳輸，使得傳輸效能可以進一步提升。
+- 另外若是使用默認設定，也就是`UCX_TLS=all`時，其效能表現又再比`ud_verbs`來得好上一點，從圖中可以看出，雖然兩條線在`latency`上幾乎是重疊的，只有在size很大時才略微低了一點，但在`bandwidth`上，從中等size時，`all`的`bandwidth`就比`ud_verbs`高出了不少。
+- 這個結果顯示出，`UCX`在選擇`transport layer`時，可以根據目前application的情況，自動選擇最好的`transport layer`，從而讓傳輸的效能得以優化。
+
 ## 4. Experience & Conclusion
 
 - 本次作業所花費的時間應該是所有作業中最久的一次，因為先前的作業只需要知道演算法的原理，並且運用上課所學到的平行方法去將演算法進行平行優化即可，雖然coding上時常遇到bug也會需要解決很久，但此次作業因為涉及到底層的設計，加上對於UCX並沒有那麼了解，所以在閱讀課程講義，理解Hw Spec，再去trace code的時間遠比實作來的更久，並且一開始面對著這麼大型的專案，即使透過課程講義和Hw Spec大致知道所需要的東西會在`ucp_context.c`，`ucp_worker.c`和`ucp_ep.c`這三個檔案內，可是仍然不知道該從何開始看起。
